@@ -3,7 +3,6 @@ import { authService } from '../services/authService';
 import { groupsService } from '../services/groupsService';
 import AuthScreen from './AuthScreen';
 import Icon from './Icon';
-import Modal from './Modal';
 
 const SmartSplitApp = () => {
   const [user, setUser] = useState(null);
@@ -13,23 +12,17 @@ const SmartSplitApp = () => {
   const [groupExpenses, setGroupExpenses] = useState([]);
   const [groupBalances, setGroupBalances] = useState(null);
 
-  // Modals
-  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
-  const [showJoinGroupModal, setShowJoinGroupModal] = useState(false);
-  const [showAddExpenseModal, setShowAddExpenseModal] = useState(false);
-  const [showProfileModal, setShowProfileModal] = useState(false);
+  // Stati per modals semplificati
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [showJoinGroup, setShowJoinGroup] = useState(false);
+  const [showAddExpense, setShowAddExpense] = useState(false);
 
-  // Form data
-  const [newGroupName, setNewGroupName] = useState('');
-  const [newGroupDescription, setNewGroupDescription] = useState('');
+  // Form data semplificati
+  const [groupName, setGroupName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
-  const [expenseForm, setExpenseForm] = useState({
-    title: '',
-    description: '',
-    totalAmount: '',
-    location: '',
-    shares: {},
-  });
+  const [expenseTitle, setExpenseTitle] = useState('');
+  const [expenseAmount, setExpenseAmount] = useState('');
+  const [myShare, setMyShare] = useState('');
 
   useEffect(() => {
     initializeAuth();
@@ -37,39 +30,23 @@ const SmartSplitApp = () => {
 
   useEffect(() => {
     if (user) {
-      loadUserGroups();
+      loadGroups();
     }
   }, [user]);
 
   useEffect(() => {
     if (activeGroup) {
       loadGroupData();
-      // Setup real-time subscription
-      const unsubscribe = groupsService.subscribeToGroupChanges(
-        activeGroup.id,
-        {
-          onExpenseChange: () => loadGroupData(),
-          onMemberChange: () => loadGroupData(),
-          onShareChange: () => loadGroupData(),
-        }
-      );
-
-      return unsubscribe;
     }
   }, [activeGroup]);
 
   const initializeAuth = async () => {
     try {
-      // Check for existing session
-      const {
-        data: { session },
-      } = await authService.getCurrentSession();
-
+      const { data: { session } } = await authService.getCurrentSession();
       if (session?.user) {
         setUser(session.user);
       }
 
-      // Setup auth state listener
       authService.onAuthStateChange((event, session) => {
         if (event === 'SIGNED_IN' && session?.user) {
           setUser(session.user);
@@ -80,202 +57,144 @@ const SmartSplitApp = () => {
         }
       });
     } catch (error) {
-      console.error('Auth initialization error:', error);
+      console.error('Auth error:', error);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const loadUserGroups = async () => {
-    try {
-      const result = await groupsService.getUserGroups();
-      if (result.success) {
-        setGroups(result.groups);
-      } else {
-        alert(result.error);
-      }
-    } catch (error) {
-      console.error('Error loading groups:', error);
+  const loadGroups = async () => {
+    const result = await groupsService.getUserGroups();
+    if (result.success) {
+      setGroups(result.groups);
+    } else {
+      showMessage(result.error);
     }
   };
 
   const loadGroupData = async () => {
     if (!activeGroup) return;
 
-    try {
-      // Load expenses
-      const expensesResult = await groupsService.getGroupExpenses(
-        activeGroup.id
-      );
-      if (expensesResult.success) {
-        setGroupExpenses(expensesResult.expenses);
-      }
+    const expensesResult = await groupsService.getGroupExpenses(activeGroup.id);
+    if (expensesResult.success) {
+      setGroupExpenses(expensesResult.expenses);
+    }
 
-      // Load balances
-      const balancesResult = await groupsService.calculateGroupBalances(
-        activeGroup.id
-      );
-      if (balancesResult.success) {
-        setGroupBalances(balancesResult);
-      }
-
-      // Refresh group details
-      const groupResult = await groupsService.getGroupDetails(activeGroup.id);
-      if (groupResult.success) {
-        setActiveGroup(groupResult.group);
-      }
-    } catch (error) {
-      console.error('Error loading group data:', error);
+    const balancesResult = await groupsService.calculateGroupBalances(activeGroup.id);
+    if (balancesResult.success) {
+      setGroupBalances(balancesResult);
     }
   };
 
-  const handleCreateGroup = async () => {
-    if (!newGroupName.trim()) {
-      alert('Inserisci un nome per il gruppo');
+  const showMessage = (message, isError = true) => {
+    alert(message); // Semplificato - in futuro si può migliorare con toast
+  };
+
+  const showSuccess = (message) => {
+    showMessage(message, false);
+  };
+
+  // AZIONI SEMPLIFICATE
+
+  const createGroup = async () => {
+    if (!groupName.trim()) {
+      showMessage('Inserisci un nome per il gruppo');
       return;
     }
 
-    try {
-      const result = await groupsService.createGroup(
-        newGroupName,
-        newGroupDescription
-      );
-      if (result.success) {
-        alert(result.message);
-        setNewGroupName('');
-        setNewGroupDescription('');
-        setShowCreateGroupModal(false);
-        loadUserGroups();
-      } else {
-        alert(result.error);
-      }
-    } catch (error) {
-      alert('Si è verificato un errore imprevisto');
+    const result = await groupsService.createGroup(groupName.trim());
+    if (result.success) {
+      showSuccess('Gruppo creato! Condividi il codice: ' + result.group.invite_code);
+      setGroupName('');
+      setShowCreateGroup(false);
+      loadGroups();
+    } else {
+      showMessage(result.error);
     }
   };
 
-  const handleJoinGroup = async () => {
+  const joinGroup = async () => {
     if (!inviteCode.trim()) {
-      alert('Inserisci il codice invito');
+      showMessage('Inserisci il codice invito');
       return;
     }
 
-    try {
-      const result = await groupsService.joinGroupByInviteCode(inviteCode);
-      if (result.success) {
-        alert(result.message);
-        setInviteCode('');
-        setShowJoinGroupModal(false);
-        loadUserGroups();
-      } else {
-        alert(result.error);
-      }
-    } catch (error) {
-      alert('Si è verificato un errore imprevisto');
+    const result = await groupsService.joinGroupByInviteCode(inviteCode.trim());
+    if (result.success) {
+      showSuccess(result.message);
+      setInviteCode('');
+      setShowJoinGroup(false);
+      loadGroups();
+    } else {
+      showMessage(result.error);
     }
   };
 
-  const handleAddExpense = async () => {
-    if (!expenseForm.title.trim()) {
-      alert('Inserisci un titolo per la spesa');
+  const addExpense = async () => {
+    if (!expenseTitle.trim()) {
+      showMessage('Inserisci un titolo per la spesa');
       return;
     }
 
-    const totalAmount = parseFloat(expenseForm.totalAmount);
-    if (isNaN(totalAmount) || totalAmount <= 0) {
-      alert('Inserisci un importo valido');
+    const amount = parseFloat(expenseAmount);
+    const share = parseFloat(myShare);
+
+    if (isNaN(amount) || amount <= 0) {
+      showMessage('Inserisci un importo valido');
       return;
     }
 
-    // Verifica che ci siano consumi
-    const hasShares = Object.values(expenseForm.shares).some(
-      (amount) => parseFloat(amount) > 0
-    );
-
-    if (!hasShares) {
-      alert('Almeno una persona deve aver consumato qualcosa');
+    if (isNaN(share) || share <= 0) {
+      showMessage('Inserisci quanto hai consumato');
       return;
     }
 
-    try {
-      const result = await groupsService.createExpense(
-        activeGroup.id,
-        expenseForm
-      );
-      if (result.success) {
-        alert(result.message);
-        setExpenseForm({
-          title: '',
-          description: '',
-          totalAmount: '',
-          location: '',
-          shares: {},
-        });
-        setShowAddExpenseModal(false);
-        loadGroupData();
-      } else {
-        alert(result.error);
+    if (share > amount) {
+      showMessage('Non puoi aver consumato più di quanto hai pagato');
+      return;
+    }
+
+    // Versione semplificata: solo il creatore consuma
+    const expenseData = {
+      title: expenseTitle.trim(),
+      totalAmount: amount.toString(),
+      shares: {
+        [user.id]: share.toString()
       }
-    } catch (error) {
-      alert('Si è verificato un errore imprevisto');
+    };
+
+    const result = await groupsService.createExpense(activeGroup.id, expenseData);
+    if (result.success) {
+      showSuccess('Spesa aggiunta!');
+      setExpenseTitle('');
+      setExpenseAmount('');
+      setMyShare('');
+      setShowAddExpense(false);
+      loadGroupData();
+    } else {
+      showMessage(result.error);
     }
   };
 
-  const handleLogout = async () => {
-    if (window.confirm('Sei sicuro di voler uscire?')) {
-      const result = await authService.signOut();
-      if (!result.success) {
-        alert(result.error);
-      }
+  const logout = async () => {
+    if (confirm('Vuoi uscire?')) {
+      await authService.signOut();
     }
   };
 
-  const shareInviteCode = (code) => {
+  const shareGroup = (code) => {
     if (navigator.share) {
       navigator.share({
-        title: 'Codice Invito SmartSplit',
-        text: `Unisciti al mio gruppo su SmartSplit con il codice: ${code}`,
+        title: 'Unisciti al mio gruppo SmartSplit',
+        text: `Codice invito: ${code}`
       });
     } else {
-      // Fallback: copia negli appunti
-      navigator.clipboard
-        .writeText(code)
-        .then(() => {
-          alert(`Codice invito copiato: ${code}`);
-        })
-        .catch(() => {
-          alert(`Condividi questo codice: ${code}`);
-        });
+      navigator.clipboard.writeText(code).then(() => {
+        showSuccess(`Codice copiato: ${code}`);
+      }).catch(() => {
+        showSuccess(`Condividi questo codice: ${code}`);
+      });
     }
-  };
-
-  const openExpenseModal = () => {
-    if (!activeGroup?.group_members || activeGroup.group_members.length === 0) {
-      alert('Il gruppo deve avere almeno un membro per aggiungere spese');
-      return;
-    }
-
-    // Inizializza shares per tutti i membri
-    const initialShares = {};
-    activeGroup.group_members.forEach((member) => {
-      initialShares[member.user_id] = '';
-    });
-
-    setExpenseForm({
-      title: '',
-      description: '',
-      totalAmount: '',
-      location: '',
-      shares: initialShares,
-    });
-    setShowAddExpenseModal(true);
-  };
-
-  const calculateTotalShares = () => {
-    return Object.values(expenseForm.shares).reduce((sum, amount) => {
-      const num = parseFloat(amount);
-      return sum + (isNaN(num) ? 0 : num);
-    }, 0);
   };
 
   if (isLoading) {
@@ -293,436 +212,298 @@ const SmartSplitApp = () => {
     return <AuthScreen onAuthSuccess={setUser} />;
   }
 
-  // LISTA GRUPPI
+  // SCHERMATA LISTA GRUPPI
   if (!activeGroup) {
     return (
       <div className="smartsplit-container">
-        {/* Header */}
+        {/* Header semplificato */}
         <div className="header">
-          <h1 className="header-title">I tuoi gruppi</h1>
-          <div className="header-buttons">
-            <button
-              className="header-button"
-              onClick={() => setShowProfileModal(true)}
-            >
-              <Icon name="user" size={20} color="white" />
-            </button>
-            <button
-              className="header-button"
-              onClick={() => setShowCreateGroupModal(true)}
-            >
-              <Icon name="add" size={20} color="white" />
-            </button>
-          </div>
+          <h1 className="header-title">💰 SmartSplit</h1>
+          <button className="header-button" onClick={logout}>
+            <Icon name="logout" size={20} color="white" />
+          </button>
         </div>
 
         <div className="content">
-          {/* Quick Actions */}
-          <div className="quick-actions">
-            <button
-              className="quick-action-button"
-              onClick={() => setShowCreateGroupModal(true)}
-            >
-              <Icon name="add" size={24} color="#2196F3" />
-              <span className="quick-action-text">Crea Gruppo</span>
-            </button>
+          {/* Benvenuto */}
+          <div className="welcome-card">
+            <h2>Ciao {user.user_metadata?.full_name || user.email}! 👋</h2>
+            <p>Gestisci le spese di gruppo in modo semplice</p>
+          </div>
 
-            <button
-              className="quick-action-button"
-              onClick={() => setShowJoinGroupModal(true)}
+          {/* Azioni principali */}
+          <div className="action-buttons">
+            <button 
+              className="action-btn primary"
+              onClick={() => setShowCreateGroup(true)}
             >
-              <Icon name="qr-code" size={24} color="#4CAF50" />
-              <span className="quick-action-text">Unisciti</span>
+              <Icon name="add" size={24} />
+              Crea Gruppo
+            </button>
+            
+            <button 
+              className="action-btn secondary"
+              onClick={() => setShowJoinGroup(true)}
+            >
+              <Icon name="qr-code" size={24} />
+              Unisciti a Gruppo
             </button>
           </div>
 
-          {/* Groups List */}
-          {groups.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">👥</div>
-              <h2 className="empty-text">Nessun gruppo ancora</h2>
-              <p className="empty-subtext">
-                Crea un gruppo o unisciti a uno esistente per iniziare!
-              </p>
-            </div>
-          ) : (
-            <div>
-              {groups.map((item) => (
-                <div
-                  key={item.id}
-                  className="group-card"
-                  onClick={() => setActiveGroup(item)}
+          {/* Lista gruppi */}
+          <div className="groups-section">
+            <h3>I tuoi gruppi ({groups.length})</h3>
+            
+            {groups.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">👥</div>
+                <p>Nessun gruppo ancora</p>
+                <p className="empty-subtext">
+                  Crea il tuo primo gruppo o unisciti a uno esistente!
+                </p>
+              </div>
+            ) : (
+              groups.map((group) => (
+                <div 
+                  key={group.id} 
+                  className="group-card simple"
+                  onClick={() => setActiveGroup(group)}
                 >
                   <div className="group-info">
-                    <h3 className="group-name">{item.name}</h3>
-                    <p className="group-details">
-                      {item.memberCount} membri • {item.expenseCount} spese
-                    </p>
-                    {item.totalAmount > 0 && (
-                      <p className="group-amount">
-                        Totale: {item.totalAmount.toFixed(2)}€
-                      </p>
+                    <h4>{group.name}</h4>
+                    <p>{group.memberCount} membri • {group.expenseCount} spese</p>
+                    {group.totalAmount > 0 && (
+                      <p className="group-total">Totale: €{group.totalAmount.toFixed(2)}</p>
                     )}
-                    <p className="group-role">
-                      {item.userRole === 'admin' ? '👑 Admin' : '👤 Membro'}
-                    </p>
                   </div>
-                  <Icon name="chevron-forward" size={20} color="#666" />
+                  <Icon name="chevron-forward" size={20} />
                 </div>
-              ))}
-            </div>
-          )}
+              ))
+            )}
+          </div>
         </div>
 
-        {/* Modals */}
-        {showCreateGroupModal && (
-          <Modal
-            title="Nuovo Gruppo"
-            onClose={() => setShowCreateGroupModal(false)}
-            onSave={handleCreateGroup}
+        {/* Modal Crea Gruppo */}
+        {showCreateGroup && (
+          <SimpleModal
+            title="Crea Nuovo Gruppo"
+            onClose={() => setShowCreateGroup(false)}
+            onSave={createGroup}
           >
-            <div className="form-group">
-              <input
-                className="form-input"
-                placeholder="Nome del gruppo"
-                value={newGroupName}
-                onChange={(e) => setNewGroupName(e.target.value)}
-                maxLength={50}
-              />
-            </div>
-            <div className="form-group">
-              <textarea
-                className="form-input form-textarea"
-                placeholder="Descrizione (opzionale)"
-                value={newGroupDescription}
-                onChange={(e) => setNewGroupDescription(e.target.value)}
-                maxLength={200}
-              />
-            </div>
-          </Modal>
+            <input
+              type="text"
+              placeholder="Nome del gruppo (es: Viaggio Roma 2024)"
+              value={groupName}
+              onChange={(e) => setGroupName(e.target.value)}
+              className="simple-input"
+              maxLength={50}
+            />
+            <p className="help-text">
+              💡 Dopo aver creato il gruppo, riceverai un codice da condividere
+            </p>
+          </SimpleModal>
         )}
 
-        {showJoinGroupModal && (
-          <Modal
+        {/* Modal Unisciti */}
+        {showJoinGroup && (
+          <SimpleModal
             title="Unisciti a Gruppo"
-            onClose={() => setShowJoinGroupModal(false)}
-            onSave={handleJoinGroup}
+            onClose={() => setShowJoinGroup(false)}
+            onSave={joinGroup}
           >
-            <div className="form-group">
-              <input
-                className="form-input"
-                placeholder="Codice invito"
-                value={inviteCode}
-                onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-                maxLength={10}
-                style={{ textTransform: 'uppercase' }}
-              />
-              <p className="help-text">
-                💡 Chiedi il codice invito al creatore del gruppo
-              </p>
-            </div>
-          </Modal>
-        )}
-
-        {showProfileModal && (
-          <Modal
-            title="Profilo"
-            onClose={() => setShowProfileModal(false)}
-            showSave={false}
-          >
-            <div className="profile-info">
-              <Icon name="user" size={40} color="#2196F3" />
-              <h3 className="profile-name">
-                {user.user_metadata?.full_name || user.email}
-              </h3>
-              <p className="profile-email">{user.email}</p>
-            </div>
-
-            <div className="profile-stats">
-              <h4 className="stats-title">Le tue statistiche:</h4>
-              <p className="stat-item">👥 {groups.length} gruppi</p>
-              <p className="stat-item">
-                💰 {groups.reduce((sum, g) => sum + g.expenseCount, 0)} spese
-                create
-              </p>
-            </div>
-
-            <div style={{ marginTop: '24px' }}>
-              <button
-                className="btn btn-error"
-                onClick={handleLogout}
-                style={{ width: '100%' }}
-              >
-                Esci
-              </button>
-            </div>
-          </Modal>
+            <input
+              type="text"
+              placeholder="Codice invito (es: ABC123)"
+              value={inviteCode}
+              onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+              className="simple-input"
+              maxLength={10}
+              style={{ textTransform: 'uppercase' }}
+            />
+            <p className="help-text">
+              💡 Chiedi il codice a chi ha creato il gruppo
+            </p>
+          </SimpleModal>
         )}
       </div>
     );
   }
 
-  // DETTAGLI GRUPPO
+  // SCHERMATA DETTAGLI GRUPPO
   return (
     <div className="smartsplit-container">
-      {/* Header */}
+      {/* Header gruppo */}
       <div className="header">
         <button onClick={() => setActiveGroup(null)}>
           <Icon name="arrow-back" size={24} color="white" />
         </button>
         <h1 className="header-title">{activeGroup.name}</h1>
-        <button onClick={() => shareInviteCode(activeGroup.invite_code)}>
+        <button onClick={() => shareGroup(activeGroup.invite_code)}>
           <Icon name="share" size={24} color="white" />
         </button>
       </div>
 
-      <div className="content" style={{ overflowY: 'auto' }}>
-        {/* Group Info */}
-        <div className="group-info-card">
-          <h2 className="group-info-title">{activeGroup.name}</h2>
-          {activeGroup.description && (
-            <p className="group-info-description">{activeGroup.description}</p>
-          )}
-          <div className="group-info-stats">
-            <span className="group-info-stat">
-              👥 {activeGroup.group_members?.length || 0} membri
-            </span>
-            <span className="group-info-stat">
-              💰 {groupExpenses.length} spese
-            </span>
-            <button
-              onClick={() => shareInviteCode(activeGroup.invite_code)}
-              className="invite-button"
-            >
-              <span className="invite-button-text">
-                📱 Invita: {activeGroup.invite_code}
-              </span>
-            </button>
+      <div className="content">
+        {/* Info gruppo */}
+        <div className="group-header-card">
+          <div className="group-header-info">
+            <h2>{activeGroup.name}</h2>
+            <p>👥 {activeGroup.group_members?.length || 0} membri</p>
           </div>
+          <button 
+            className="invite-btn"
+            onClick={() => shareGroup(activeGroup.invite_code)}
+          >
+            Invita: {activeGroup.invite_code}
+          </button>
         </div>
 
-        {/* Bilanci */}
+        {/* Pulsante aggiungi spesa */}
+        <button 
+          className="add-expense-btn"
+          onClick={() => setShowAddExpense(true)}
+        >
+          <Icon name="add" size={24} />
+          Aggiungi Spesa
+        </button>
+
+        {/* Bilanci semplificati */}
         {groupBalances && groupBalances.balances.length > 0 && (
-          <div className="section">
-            <h2 className="section-title">💰 Bilanci</h2>
+          <div className="balances-section">
+            <h3>💰 Situazione</h3>
             {groupBalances.balances.map((balance, index) => (
-              <div key={index} className="balance-card">
-                <div className="balance-info">
-                  <h4 className="balance-name">
-                    {balance.full_name || balance.email}
-                  </h4>
-                  <p className="balance-details">
-                    Pagato: {parseFloat(balance.total_paid).toFixed(2)}€ •
-                    Consumato: {parseFloat(balance.total_consumed).toFixed(2)}€
-                  </p>
-                </div>
-                <span
-                  className={`balance-amount ${
-                    parseFloat(balance.balance) >= 0
-                      ? 'balance-positive'
-                      : 'balance-negative'
-                  }`}
-                >
-                  {parseFloat(balance.balance) >= 0 ? '+' : ''}
-                  {parseFloat(balance.balance).toFixed(2)}€
+              <div key={index} className="balance-simple">
+                <span className="balance-name">
+                  {balance.user_id === user.id ? 'Tu' : (balance.full_name || 'Utente')}
+                </span>
+                <span className={`balance-amount ${parseFloat(balance.balance) >= 0 ? 'positive' : 'negative'}`}>
+                  {parseFloat(balance.balance) >= 0 ? '+' : ''}€{Math.abs(parseFloat(balance.balance)).toFixed(2)}
                 </span>
               </div>
             ))}
-          </div>
-        )}
 
-        {/* Regolamenti */}
-        {groupBalances && groupBalances.settlements.length > 0 && (
-          <div className="section">
-            <h2 className="section-title">🔄 Regolamenti</h2>
-            {groupBalances.settlements.map((settlement, index) => (
-              <div key={index} className="settlement-card">
-                <p className="settlement-text">
-                  {settlement.from} deve {settlement.amount.toFixed(2)}€ a{' '}
-                  {settlement.to}
-                </p>
+            {/* Regolamenti semplificati */}
+            {groupBalances.settlements.length > 0 && (
+              <div className="settlements">
+                <h4>🔄 Chi deve pagare:</h4>
+                {groupBalances.settlements.map((settlement, index) => (
+                  <div key={index} className="settlement-simple">
+                    <p>
+                      {settlement.fromUserId === user.id ? 'Tu devi' : settlement.from + ' deve'} 
+                      <strong> €{settlement.amount.toFixed(2)} </strong>
+                      {settlement.toUserId === user.id ? 'a te' : 'a ' + settlement.to}
+                    </p>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
         )}
 
         {/* Spese */}
-        <div className="section">
-          <div className="section-header">
-            <h2 className="section-title">💳 Spese Recenti</h2>
-            <button
-              className="btn-icon btn-icon-sm btn-secondary"
-              onClick={openExpenseModal}
-            >
-              <Icon name="add" size={20} color="white" />
-            </button>
-          </div>
-
+        <div className="expenses-section">
+          <h3>🧾 Spese Recenti</h3>
+          
           {groupExpenses.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">🧾</div>
-              <h3 className="empty-text">Nessuna spesa ancora</h3>
-              <p className="empty-subtext">
-                Tocca + per aggiungere la prima spesa!
-              </p>
+            <div className="empty-state small">
+              <p>Nessuna spesa ancora</p>
+              <p className="empty-subtext">Aggiungi la prima spesa!</p>
             </div>
           ) : (
-            groupExpenses.map((expense) => (
-              <div key={expense.id} className="expense-card">
-                <div className="expense-header">
-                  <h4 className="expense-title">{expense.title}</h4>
-                  <span className="expense-amount">
-                    {parseFloat(expense.total_amount).toFixed(2)}€
-                  </span>
+            groupExpenses.slice(0, 10).map((expense) => (
+              <div key={expense.id} className="expense-simple">
+                <div className="expense-main">
+                  <h4>{expense.title}</h4>
+                  <span className="expense-amount">€{parseFloat(expense.total_amount).toFixed(2)}</span>
                 </div>
-
-                <p className="expense-creator">
-                  💳 Pagato da{' '}
-                  {expense.created_by === user.id ? 'Te' : 'Altro utente'}
+                <p className="expense-details">
+                  💳 {expense.created_by === user.id ? 'Tu hai pagato' : 'Pagato da altro utente'} • 
+                  📅 {new Date(expense.expense_date).toLocaleDateString('it-IT')}
                 </p>
-
-                {expense.description && (
-                  <p className="expense-description">{expense.description}</p>
+                {expense.expense_shares && expense.expense_shares.length > 0 && (
+                  <p className="expense-consumption">
+                    🍽️ Consumato: €{expense.expense_shares.reduce((sum, share) => 
+                      sum + parseFloat(share.amount_consumed), 0).toFixed(2)}
+                  </p>
                 )}
-
-                {expense.location && (
-                  <p className="expense-location">📍 {expense.location}</p>
-                )}
-
-                <p className="expense-date">
-                  📅{' '}
-                  {new Date(expense.expense_date).toLocaleDateString('it-IT')}
-                </p>
-
-                {expense.expense_shares &&
-                  expense.expense_shares.length > 0 && (
-                    <div className="expense-shares">
-                      <h5 className="expense-shares-title">Consumi:</h5>
-                      {expense.expense_shares.map((share, index) => (
-                        <p key={index} className="expense-share">
-                          • {share.user_id === user.id ? 'Tu' : 'Altro utente'}:{' '}
-                          {parseFloat(share.amount_consumed).toFixed(2)}€
-                        </p>
-                      ))}
-                    </div>
-                  )}
               </div>
             ))
           )}
         </div>
       </div>
 
-      {/* Add Expense Modal */}
-      {showAddExpenseModal && (
-        <Modal
+      {/* Modal Aggiungi Spesa */}
+      {showAddExpense && (
+        <SimpleModal
           title="Nuova Spesa"
-          onClose={() => setShowAddExpenseModal(false)}
-          onSave={handleAddExpense}
+          onClose={() => setShowAddExpense(false)}
+          onSave={addExpense}
         >
-          <div className="form-group">
-            <input
-              className="form-input"
-              placeholder="Titolo spesa (es: Cena ristorante)"
-              value={expenseForm.title}
-              onChange={(e) =>
-                setExpenseForm({ ...expenseForm, title: e.target.value })
-              }
-              maxLength={100}
-            />
-          </div>
-
-          <div className="form-group">
-            <textarea
-              className="form-input form-textarea"
-              placeholder="Descrizione (opzionale)"
-              value={expenseForm.description}
-              onChange={(e) =>
-                setExpenseForm({ ...expenseForm, description: e.target.value })
-              }
-              maxLength={200}
-            />
-          </div>
-
-          <div className="form-group">
-            <input
-              className="form-input"
-              placeholder="Importo totale pagato"
-              value={expenseForm.totalAmount}
-              onChange={(e) =>
-                setExpenseForm({ ...expenseForm, totalAmount: e.target.value })
-              }
-              type="number"
-              step="0.01"
-            />
-          </div>
-
-          <div className="form-group">
-            <input
-              className="form-input"
-              placeholder="Luogo (opzionale)"
-              value={expenseForm.location}
-              onChange={(e) =>
-                setExpenseForm({ ...expenseForm, location: e.target.value })
-              }
-              maxLength={100}
-            />
-          </div>
-
-          <label className="form-label">
-            Quanto ha consumato ogni persona?
-          </label>
-          {activeGroup.group_members?.map((member) => (
-            <div key={member.user_id} className="member-expense-input">
-              <span className="member-label">
-                {member.user_id === user.id
-                  ? 'Tu'
-                  : `Utente ${member.user_id.slice(-4)}`}
-              </span>
-              <input
-                className="amount-input"
-                placeholder="0.00"
-                value={expenseForm.shares[member.user_id] || ''}
-                onChange={(e) =>
-                  setExpenseForm({
-                    ...expenseForm,
-                    shares: {
-                      ...expenseForm.shares,
-                      [member.user_id]: e.target.value,
-                    },
-                  })
-                }
-                type="number"
-                step="0.01"
-              />
-              <span className="currency-label">€</span>
-            </div>
-          ))}
-
-          <div className="total-section">
-            <p className="total-label">
-              Totale consumato: {calculateTotalShares().toFixed(2)}€
-            </p>
-            <p className="total-paid">
-              Importo pagato:{' '}
-              {parseFloat(expenseForm.totalAmount || 0).toFixed(2)}€
-            </p>
-          </div>
-
+          <input
+            type="text"
+            placeholder="Cosa hai pagato? (es: Cena ristorante)"
+            value={expenseTitle}
+            onChange={(e) => setExpenseTitle(e.target.value)}
+            className="simple-input"
+            maxLength={100}
+          />
+          
+          <input
+            type="number"
+            placeholder="Quanto hai pagato in totale?"
+            value={expenseAmount}
+            onChange={(e) => setExpenseAmount(e.target.value)}
+            className="simple-input"
+            step="0.01"
+          />
+          
+          <input
+            type="number"
+            placeholder="Quanto hai consumato tu?"
+            value={myShare}
+            onChange={(e) => setMyShare(e.target.value)}
+            className="simple-input"
+            step="0.01"
+          />
+          
           <div className="help-section">
             <p className="help-text">
-              💡 <strong>Ricorda:</strong>
-              <br />
-              • Solo tu puoi aggiungere le TUE spese
-              <br />
-              • Inserisci l'importo che HAI PAGATO
-              <br />
-              • Indica quanto ha consumato ogni persona
-              <br />• I calcoli avvengono automaticamente!
+              💡 <strong>Esempio:</strong><br/>
+              • Hai pagato €50 per una pizza<br/>
+              • Tu hai mangiato per €20<br/>
+              • Il resto lo dividerete con gli altri dopo
             </p>
           </div>
-        </Modal>
+        </SimpleModal>
       )}
     </div>
+  );
+};
+
+// Componente Modal Semplificato
+const SimpleModal = ({ title, children, onClose, onSave }) => {
+  return (
+    <div className="simple-modal-overlay" onClick={onClose}>
+      <div className="simple-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="simple-modal-header">
+          <h3>{title}</h3>
+          <button onClick={onClose} className="close-btn">✕</button>
+        </div>
+        
+        <div className="simple-modal-content">
+          {children}
+        </div>
+        
+        <div className="simple-modal-actions">
+          <button onClick={onClose} className="btn-cancel">Annulla</button>
+          <button onClick={onSave} className="btn-save">Salva</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default SmartSplitApp;
   );
 };
 
