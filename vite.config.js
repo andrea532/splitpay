@@ -10,6 +10,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    chunkSizeWarningLimit: 1600,
     rollupOptions: {
       output: {
         manualChunks: {
@@ -22,4 +23,5 @@ export default defineConfig({
   define: {
     global: 'globalThis',
   },
+  base: '/', // Importante per Netlify
 });
