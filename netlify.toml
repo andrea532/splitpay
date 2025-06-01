@@ -5,8 +5,8 @@
   # Comando per il build
   command = "npm run build"
   
-  # Directory con i file compilati
-  publish = "build"
+  # Directory con i file compilati (Vite usa 'dist' di default, non 'build')
+  publish = "dist"
 
 [build.environment]
   # Versione Node.js
@@ -15,7 +15,7 @@
   # Cache delle dipendenze npm
   NPM_FLAGS = "--prefer-offline --no-audit"
 
-# Redirects e rewrites
+# Redirects e rewrites - FONDAMENTALE per SPA React
 [[redirects]]
   from = "/*"
   to = "/index.html"
@@ -33,9 +33,9 @@
 
 # Cache statico per assets
 [[headers]]
-  for = "/static/*"
+  for = "/assets/*"
   [headers.values]
-    Cache-Control = "public, max-age=31536000"
+    Cache-Control = "public, max-age=31536000, immutable"
 
 # Cache per il service worker
 [[headers]]
@@ -64,14 +64,6 @@
 # Plugin Netlify (opzionali)
 [[plugins]]
   package = "@netlify/plugin-sitemap"
-
-# Funzioni Netlify (se necessarie)
-[functions]
-  directory = "netlify/functions"
-
-# Split testing (opzionale)
-# [context.branch-deploy]
-#   command = "npm run build:staging"
 
 # Variabili d'ambiente per diversi contesti
 [context.production.environment]
