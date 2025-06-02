@@ -1,579 +1,705 @@
-import {
-  supabase,
-  handleSupabaseError,
-  debugLog,
-  TABLES,
-  ROLES,
-  generateInviteCode,
-} from '../config/supabase';
+import { supabase, debugLog, handleSupabaseError } from '../config/supabase';
 
-class SimplifiedGroupsService {
-  // 👥 Crea nuovo gruppo - SEMPLIFICATO
-  async createGroup(name, description = '') {
-    debugLog('Creating Group (Simplified)', { name });
-
-    try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-
-      if (authError || !user) {
-        throw new Error('Utente non autenticato');
-      }
-
-      const inviteCode = generateInviteCode();
-      
-      // Crea gruppo
-      const { data: newGroup, error: groupError } = await supabase
-        .from(TABLES.GROUPS)
-        .insert([{
-          name: name.trim(),
-          description: description.trim(),
-          created_by: user.id,
-          invite_code: inviteCode,
-        }])
-        .select('*')
-        .single();
-
-      if (groupError) throw groupError;
-
-      // Aggiungi creatore come admin
-      const { error: memberError } = await supabase
-        .from(TABLES.GROUP_MEMBERS)
-        .insert([{
-          group_id: newGroup.id,
-          user_id: user.id,
-          role: ROLES.ADMIN,
-        }]);
-
-      if (memberError) throw memberError;
-
-      return {
-        success: true,
-        group: newGroup,
-        message: 'Gruppo creato con successo!',
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: handleSupabaseError(error),
-      };
-    }
-  }
-
-  // 📋 Ottieni gruppi utente - QUERY SEMPLIFICATA
+export const groupsService = {
+  // 🔍 Get all user groups
   async getUserGroups() {
-    debugLog('Getting User Groups (Simplified)');
-
     try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      debugLog('Getting user groups');
 
-      if (authError || !user) {
-        throw new Error('Utente non autenticato');
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        return { success: false, error: 'Utente non autenticato' };
       }
 
-      // Query diretta con join semplificato
-      const { data: groupData, error } = await supabase
-        .from('user_groups_view')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+      // Get groups where user is a member
+      const { data: memberships, error: membershipError } = await supabase
+        .from('group_members')
+        .select('group_id')
+        .eq('user_id', user.id);
 
-      if (error) {
-        // Fallback su query manuale se la view non esiste
-        return this.getUserGroupsManual(user.id);
+      if (membershipError) {
+        debugLog('Error getting memberships', null, membershipError);
+        return { success: false, error: handleSupabaseError(membershipError) };
       }
 
-      return {
-        success: true,
-        groups: groupData || [],
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: handleSupabaseError(error),
-      };
-    }
-  }
-
-  // Fallback manuale se la view non esiste
-  async getUserGroupsManual(userId) {
-    try {
-      // 1. Ottieni membri
-      const { data: memberGroups, error: memberError } = await supabase
-        .from(TABLES.GROUP_MEMBERS)
-        .select('group_id, role')
-        .eq('user_id', userId);
-
-      if (memberError) throw memberError;
-
-      if (!memberGroups || memberGroups.length === 0) {
+      if (!memberships || memberships.length === 0) {
         return { success: true, groups: [] };
       }
 
-      const groupIds = memberGroups.map(mg => mg.group_id);
+      const groupIds = memberships.map((m) => m.group_id);
 
-      // 2. Ottieni gruppi
-      const { data: groups, error: groupsError } = await supabase
-        .from(TABLES.GROUPS)
+      // Get groups with basic info
+      const { data: groups, error } = await supabase
+        .from('groups')
         .select('*')
-        .in('id', groupIds);
+        .in('id', groupIds)
+        .order('created_at', { ascending: false });
 
-      if (groupsError) throw groupsError;
+      if (error) {
+        debugLog('Error getting groups', null, error);
+        return { success: false, error: handleSupabaseError(error) };
+      }
 
-      // 3. Aggiungi statistiche semplici
+      // Get member counts and expense stats for each group
       const groupsWithStats = await Promise.all(
         groups.map(async (group) => {
-          // Conta membri
+          // Get member count
           const { count: memberCount } = await supabase
-            .from(TABLES.GROUP_MEMBERS)
+            .from('group_members')
             .select('*', { count: 'exact', head: true })
             .eq('group_id', group.id);
 
-          // Conta spese
-          const { count: expenseCount } = await supabase
-            .from(TABLES.EXPENSES)
-            .select('*', { count: 'exact', head: true })
-            .eq('group_id', group.id);
-
-          // Somma totale spese
+          // Get expense stats
           const { data: expenses } = await supabase
-            .from(TABLES.EXPENSES)
-            .select('total_amount')
+            .from('expenses')
+            .select('id, total_amount')
             .eq('group_id', group.id);
-
-          const totalAmount = expenses?.reduce((sum, exp) => 
-            sum + parseFloat(exp.total_amount), 0) || 0;
-
-          const userRole = memberGroups.find(mg => mg.group_id === group.id)?.role || 'member';
 
           return {
             ...group,
             memberCount: memberCount || 0,
-            expenseCount: expenseCount || 0,
-            totalAmount,
-            userRole,
+            expenseCount: expenses?.length || 0,
+            totalAmount:
+              expenses?.reduce(
+                (sum, expense) => sum + parseFloat(expense.total_amount || 0),
+                0
+              ) || 0,
           };
         })
       );
 
-      return {
-        success: true,
-        groups: groupsWithStats,
-      };
+      debugLog('User groups loaded', { count: groupsWithStats.length });
+      return { success: true, groups: groupsWithStats };
     } catch (error) {
-      return {
-        success: false,
-        error: handleSupabaseError(error),
-      };
+      debugLog('Unexpected error getting user groups', null, error);
+      return { success: false, error: error.message };
     }
-  }
+  },
 
-  // 🔍 Ottieni dettagli gruppo - SEMPLIFICATO
-  async getGroupDetails(groupId) {
-    debugLog('Getting Group Details (Simplified)', { groupId });
-
+  // 🎯 Get single group with members
+  async getGroupWithMembers(groupId) {
     try {
+      debugLog('Getting group with members', { groupId });
+
+      // First get the group
       const { data: group, error: groupError } = await supabase
-        .from(TABLES.GROUPS)
+        .from('groups')
         .select('*')
         .eq('id', groupId)
         .single();
 
-      if (groupError) throw groupError;
+      if (groupError) {
+        debugLog('Error getting group', null, groupError);
+        return { success: false, error: handleSupabaseError(groupError) };
+      }
 
+      // Then get members with their profiles
       const { data: members, error: membersError } = await supabase
-        .from(TABLES.GROUP_MEMBERS)
-        .select('user_id, role, joined_at')
+        .from('group_members')
+        .select(
+          `
+          user_id,
+          role,
+          joined_at
+        `
+        )
         .eq('group_id', groupId);
 
       if (membersError) {
-        console.warn('Could not load members:', membersError);
+        debugLog('Error getting members', null, membersError);
+        return { success: false, error: handleSupabaseError(membersError) };
       }
 
-      return {
-        success: true,
-        group: {
-          ...group,
-          group_members: members || [],
-        },
-      };
+      // Get profiles for all members
+      const memberIds = members.map((m) => m.user_id);
+      const { data: profiles, error: profilesError } = await supabase
+        .from('profiles')
+        .select('id, full_name, email')
+        .in('id', memberIds);
+
+      if (profilesError) {
+        debugLog('Error getting profiles', null, profilesError);
+      }
+
+      // Merge profiles with members
+      const membersWithProfiles = members.map((member) => ({
+        ...member,
+        profiles: profiles?.find((p) => p.id === member.user_id) || null,
+      }));
+
+      // Add members to group object
+      group.group_members = membersWithProfiles;
+
+      debugLog('Group loaded', { groupName: group.name });
+      return { success: true, group };
     } catch (error) {
-      return {
-        success: false,
-        error: handleSupabaseError(error),
-      };
+      debugLog('Unexpected error getting group', null, error);
+      return { success: false, error: error.message };
     }
-  }
+  },
 
-  // 🎯 Unisciti a gruppo - MIGLIORATO
-  async joinGroupByInviteCode(inviteCode) {
-    debugLog('Joining Group (Simplified)', { inviteCode });
-
+  // ➕ Create new group
+  async createGroup(name, description = '') {
     try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      debugLog('Creating new group', { name, description });
 
-      if (authError || !user) {
-        throw new Error('Utente non autenticato');
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        return { success: false, error: 'Utente non autenticato' };
       }
 
-      // Trova gruppo
+      // Generate invite code
+      const inviteCode = Math.random()
+        .toString(36)
+        .substring(2, 10)
+        .toUpperCase();
+
+      // Create the group
       const { data: group, error: groupError } = await supabase
-        .from(TABLES.GROUPS)
-        .select('*')
-        .eq('invite_code', inviteCode.toUpperCase())
+        .from('groups')
+        .insert({
+          name,
+          description,
+          created_by: user.id,
+          invite_code: inviteCode,
+        })
+        .select()
         .single();
 
       if (groupError) {
-        if (groupError.code === 'PGRST116') {
-          throw new Error('Codice invito non valido o scaduto');
-        }
-        throw groupError;
+        debugLog('Error creating group', null, groupError);
+        return { success: false, error: handleSupabaseError(groupError) };
       }
 
-      // Verifica se già membro
+      // Add creator as admin member
+      const { error: memberError } = await supabase
+        .from('group_members')
+        .insert({
+          group_id: group.id,
+          user_id: user.id,
+          role: 'admin',
+        });
+
+      if (memberError) {
+        debugLog('Error adding creator as member', null, memberError);
+        // Rollback group creation
+        await supabase.from('groups').delete().eq('id', group.id);
+        return { success: false, error: handleSupabaseError(memberError) };
+      }
+
+      debugLog('Group created successfully', { groupId: group.id });
+      return { success: true, group };
+    } catch (error) {
+      debugLog('Unexpected error creating group', null, error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  // 🔗 Join group by invite code
+  async joinGroupByInviteCode(inviteCode) {
+    try {
+      debugLog('Joining group by invite code', { inviteCode });
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        return { success: false, error: 'Utente non autenticato' };
+      }
+
+      // Find group by invite code
+      const { data: group, error: groupError } = await supabase
+        .from('groups')
+        .select('id, name')
+        .eq('invite_code', inviteCode.toUpperCase())
+        .single();
+
+      if (groupError || !group) {
+        debugLog('Group not found', { inviteCode });
+        return { success: false, error: 'Codice invito non valido' };
+      }
+
+      // Check if already a member
       const { data: existingMember } = await supabase
-        .from(TABLES.GROUP_MEMBERS)
-        .select('*')
+        .from('group_members')
+        .select('id')
         .eq('group_id', group.id)
         .eq('user_id', user.id)
         .single();
 
       if (existingMember) {
+        return { success: false, error: 'Sei già membro di questo gruppo' };
+      }
+
+      // Add user as member
+      const { error: memberError } = await supabase
+        .from('group_members')
+        .insert({
+          group_id: group.id,
+          user_id: user.id,
+          role: 'member',
+        });
+
+      if (memberError) {
+        debugLog('Error joining group', null, memberError);
+        return { success: false, error: handleSupabaseError(memberError) };
+      }
+
+      debugLog('Successfully joined group', { groupId: group.id });
+      return { success: true, group };
+    } catch (error) {
+      debugLog('Unexpected error joining group', null, error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  // 🗑️ Delete group (only admin/creator can delete)
+  async deleteGroup(groupId) {
+    try {
+      debugLog('Deleting group', { groupId });
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        return { success: false, error: 'Utente non autenticato' };
+      }
+
+      // Check if user is the creator
+      const { data: group, error: groupError } = await supabase
+        .from('groups')
+        .select('created_by')
+        .eq('id', groupId)
+        .single();
+
+      if (groupError || !group) {
+        return { success: false, error: 'Gruppo non trovato' };
+      }
+
+      if (group.created_by !== user.id) {
         return {
           success: false,
-          error: 'Sei già membro di questo gruppo!',
+          error: 'Solo il creatore può eliminare il gruppo',
         };
       }
 
-      // Aggiungi membro
-      const { error: memberError } = await supabase
-        .from(TABLES.GROUP_MEMBERS)
-        .insert([{
-          group_id: group.id,
-          user_id: user.id,
-          role: ROLES.MEMBER,
-        }]);
+      // Get all expense IDs for this group first
+      const { data: expenses, error: expensesQueryError } = await supabase
+        .from('expenses')
+        .select('id')
+        .eq('group_id', groupId);
 
-      if (memberError) throw memberError;
-
-      return {
-        success: true,
-        group: group,
-        message: `Ti sei unito al gruppo "${group.name}"! 🎉`,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: handleSupabaseError(error),
-      };
-    }
-  }
-
-  // 💰 Crea spesa - ULTRA SEMPLIFICATO
-  async createExpense(groupId, expenseData) {
-    debugLog('Creating Expense (Simplified)', { groupId, expenseData });
-
-    try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-
-      if (authError || !user) {
-        throw new Error('Utente non autenticato');
+      if (expensesQueryError) {
+        debugLog('Error querying expenses', null, expensesQueryError);
       }
 
-      // Verifica membership
-      const { data: member } = await supabase
-        .from(TABLES.GROUP_MEMBERS)
-        .select('*')
-        .eq('group_id', groupId)
-        .eq('user_id', user.id)
-        .single();
+      // Delete expense shares if there are expenses
+      if (expenses && expenses.length > 0) {
+        const expenseIds = expenses.map((e) => e.id);
+        const { error: sharesError } = await supabase
+          .from('expense_shares')
+          .delete()
+          .in('expense_id', expenseIds);
 
-      if (!member) {
-        throw new Error('Non sei membro di questo gruppo');
-      }
-
-      // Crea spesa
-      const { data: expense, error: expenseError } = await supabase
-        .from(TABLES.EXPENSES)
-        .insert([{
-          group_id: groupId,
-          created_by: user.id,
-          title: expenseData.title.trim(),
-          description: expenseData.description?.trim() || '',
-          total_amount: parseFloat(expenseData.totalAmount),
-          location: expenseData.location?.trim() || '',
-          expense_date: new Date().toISOString().split('T')[0],
-        }])
-        .select('*')
-        .single();
-
-      if (expenseError) throw expenseError;
-
-      // Crea consumi solo se presenti
-      if (expenseData.shares && Object.keys(expenseData.shares).length > 0) {
-        const shares = Object.entries(expenseData.shares)
-          .filter(([_, amount]) => parseFloat(amount) > 0)
-          .map(([userId, amount]) => ({
-            expense_id: expense.id,
-            user_id: userId,
-            amount_consumed: parseFloat(amount),
-          }));
-
-        if (shares.length > 0) {
-          const { error: sharesError } = await supabase
-            .from(TABLES.EXPENSE_SHARES)
-            .insert(shares);
-
-          if (sharesError) {
-            console.warn('Shares error (non-critical):', sharesError);
-          }
+        if (sharesError) {
+          debugLog('Error deleting expense shares', null, sharesError);
         }
       }
 
-      return {
-        success: true,
-        expense: expense,
-        message: 'Spesa aggiunta! 💰',
-      };
+      // Delete expenses
+      const { error: expensesError } = await supabase
+        .from('expenses')
+        .delete()
+        .eq('group_id', groupId);
+
+      if (expensesError) {
+        debugLog('Error deleting expenses', null, expensesError);
+      }
+
+      // Delete group members
+      const { error: membersError } = await supabase
+        .from('group_members')
+        .delete()
+        .eq('group_id', groupId);
+
+      if (membersError) {
+        debugLog('Error deleting group members', null, membersError);
+      }
+
+      // Finally delete the group
+      const { error: deleteError } = await supabase
+        .from('groups')
+        .delete()
+        .eq('id', groupId);
+
+      if (deleteError) {
+        debugLog('Error deleting group', null, deleteError);
+        return { success: false, error: handleSupabaseError(deleteError) };
+      }
+
+      debugLog('Group deleted successfully', { groupId });
+      return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: handleSupabaseError(error),
-      };
+      debugLog('Unexpected error deleting group', null, error);
+      return { success: false, error: error.message };
     }
-  }
+  },
 
-  // 📋 Ottieni spese gruppo - SEMPLIFICATO
-  async getGroupExpenses(groupId) {
-    debugLog('Getting Group Expenses (Simplified)', { groupId });
-
+  // 💸 Create expense
+  async createExpense(groupId, expenseData) {
     try {
-      const { data: expenses, error: expensesError } = await supabase
-        .from(TABLES.EXPENSES)
-        .select(`
+      debugLog('Creating expense', { groupId, expenseData });
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        return { success: false, error: 'Utente non autenticato' };
+      }
+
+      // Destructure expense data
+      const { title, description, totalAmount, shares } = expenseData;
+
+      // Validate shares
+      const totalShares = Object.values(shares).reduce((sum, amount) => {
+        const num = parseFloat(amount);
+        return sum + (isNaN(num) ? 0 : num);
+      }, 0);
+
+      if (Math.abs(totalShares - parseFloat(totalAmount)) > 0.01) {
+        return {
+          success: false,
+          error: "Il totale dei consumi deve essere uguale all'importo totale",
+        };
+      }
+
+      // Create the expense
+      const { data: expense, error: expenseError } = await supabase
+        .from('expenses')
+        .insert({
+          group_id: groupId,
+          title,
+          description,
+          total_amount: totalAmount,
+          created_by: user.id,
+          expense_date: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (expenseError) {
+        debugLog('Error creating expense', null, expenseError);
+        return { success: false, error: handleSupabaseError(expenseError) };
+      }
+
+      // Create expense shares
+      const shareInserts = Object.entries(shares)
+        .filter(([_, amount]) => parseFloat(amount) > 0)
+        .map(([userId, amount]) => ({
+          expense_id: expense.id,
+          user_id: userId,
+          amount_consumed: amount,
+        }));
+
+      if (shareInserts.length > 0) {
+        const { error: sharesError } = await supabase
+          .from('expense_shares')
+          .insert(shareInserts);
+
+        if (sharesError) {
+          debugLog('Error creating expense shares', null, sharesError);
+          // Rollback expense creation
+          await supabase.from('expenses').delete().eq('id', expense.id);
+          return { success: false, error: handleSupabaseError(sharesError) };
+        }
+      }
+
+      debugLog('Expense created successfully', { expenseId: expense.id });
+      return { success: true, expense };
+    } catch (error) {
+      debugLog('Unexpected error creating expense', null, error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  // 🗑️ Delete expense
+  async deleteExpense(expenseId) {
+    try {
+      debugLog('Deleting expense', { expenseId });
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) {
+        return { success: false, error: 'Utente non autenticato' };
+      }
+
+      // Check if user created the expense
+      const { data: expense, error: expenseError } = await supabase
+        .from('expenses')
+        .select('created_by')
+        .eq('id', expenseId)
+        .single();
+
+      if (expenseError || !expense) {
+        return { success: false, error: 'Spesa non trovata' };
+      }
+
+      if (expense.created_by !== user.id) {
+        return {
+          success: false,
+          error: 'Solo chi ha creato la spesa può eliminarla',
+        };
+      }
+
+      // Delete expense shares first
+      const { error: sharesError } = await supabase
+        .from('expense_shares')
+        .delete()
+        .eq('expense_id', expenseId);
+
+      if (sharesError) {
+        debugLog('Error deleting expense shares', null, sharesError);
+        return { success: false, error: handleSupabaseError(sharesError) };
+      }
+
+      // Delete the expense
+      const { error: deleteError } = await supabase
+        .from('expenses')
+        .delete()
+        .eq('id', expenseId);
+
+      if (deleteError) {
+        debugLog('Error deleting expense', null, deleteError);
+        return { success: false, error: handleSupabaseError(deleteError) };
+      }
+
+      debugLog('Expense deleted successfully', { expenseId });
+      return { success: true };
+    } catch (error) {
+      debugLog('Unexpected error deleting expense', null, error);
+      return { success: false, error: error.message };
+    }
+  },
+
+  // 📊 Get group expenses
+  async getGroupExpenses(groupId) {
+    try {
+      debugLog('Getting group expenses', { groupId });
+
+      const { data: expenses, error } = await supabase
+        .from('expenses')
+        .select(
+          `
           *,
-          expense_shares (
+          expense_shares(
             user_id,
             amount_consumed
           )
-        `)
+        `
+        )
         .eq('group_id', groupId)
-        .order('created_at', { ascending: false })
-        .limit(20); // Limita per performance
-
-      if (expensesError) throw expensesError;
-
-      return {
-        success: true,
-        expenses: expenses || [],
-      };
-    } catch (error) {
-      // Fallback senza join se non funziona
-      try {
-        const { data: expenses, error } = await supabase
-          .from(TABLES.EXPENSES)
-          .select('*')
-          .eq('group_id', groupId)
-          .order('created_at', { ascending: false })
-          .limit(20);
-
-        if (error) throw error;
-
-        // Carica shares separatamente
-        const expensesWithShares = await Promise.all(
-          expenses.map(async (expense) => {
-            const { data: shares } = await supabase
-              .from(TABLES.EXPENSE_SHARES)
-              .select('user_id, amount_consumed')
-              .eq('expense_id', expense.id);
-
-            return {
-              ...expense,
-              expense_shares: shares || [],
-            };
-          })
-        );
-
-        return {
-          success: true,
-          expenses: expensesWithShares,
-        };
-      } catch (fallbackError) {
-        return {
-          success: false,
-          error: handleSupabaseError(fallbackError),
-        };
-      }
-    }
-  }
-
-  // 🧮 Calcola bilanci - SEMPLIFICATO
-  async calculateGroupBalances(groupId) {
-    debugLog('Calculating Balances (Simplified)', { groupId });
-
-    try {
-      // Prova con view se esiste
-      const { data: balances, error } = await supabase
-        .from('user_group_balances')
-        .select('*')
-        .eq('group_id', groupId);
+        .order('expense_date', { ascending: false });
 
       if (error) {
-        // Fallback su calcolo manuale
-        return this.calculateBalancesManual(groupId);
+        debugLog('Error getting expenses', null, error);
+        return { success: false, error: handleSupabaseError(error) };
       }
 
-      const settlements = this.calculateOptimalSettlements(balances || []);
-
-      return {
-        success: true,
-        balances: balances || [],
-        settlements: settlements,
-      };
+      debugLog('Expenses loaded', { count: expenses.length });
+      return { success: true, expenses };
     } catch (error) {
-      return {
-        success: false,
-        error: handleSupabaseError(error),
-      };
+      debugLog('Unexpected error getting expenses', null, error);
+      return { success: false, error: error.message };
     }
-  }
+  },
 
-  // Calcolo manuale se la view non esiste
-  async calculateBalancesManual(groupId) {
+  // 💰 Calculate group balances
+  async calculateGroupBalances(groupId) {
     try {
-      // Ottieni membri
-      const { data: members } = await supabase
-        .from(TABLES.GROUP_MEMBERS)
-        .select('user_id')
-        .eq('group_id', groupId);
+      debugLog('Calculating group balances', { groupId });
 
-      if (!members) return { success: true, balances: [], settlements: [] };
+      // Get group with members
+      const groupResult = await this.getGroupWithMembers(groupId);
+      if (!groupResult.success) {
+        return groupResult;
+      }
 
-      const balances = await Promise.all(
-        members.map(async (member) => {
-          // Calcola totale pagato
-          const { data: paidExpenses } = await supabase
-            .from(TABLES.EXPENSES)
-            .select('total_amount')
-            .eq('group_id', groupId)
-            .eq('created_by', member.user_id);
+      // Get all expenses
+      const expensesResult = await this.getGroupExpenses(groupId);
+      if (!expensesResult.success) {
+        return expensesResult;
+      }
 
-          const totalPaid = paidExpenses?.reduce((sum, exp) => 
-            sum + parseFloat(exp.total_amount), 0) || 0;
+      const { group } = groupResult;
+      const { expenses } = expensesResult;
 
-          // Calcola totale consumato
-          const { data: consumedShares } = await supabase
-            .from(TABLES.EXPENSE_SHARES)
-            .select('amount_consumed, expenses!inner(group_id)')
-            .eq('user_id', member.user_id)
-            .eq('expenses.group_id', groupId);
+      // Calculate balances for each member
+      const memberBalances = {};
 
-          const totalConsumed = consumedShares?.reduce((sum, share) => 
-            sum + parseFloat(share.amount_consumed), 0) || 0;
+      // Initialize balances for all members
+      group.group_members.forEach((member) => {
+        memberBalances[member.user_id] = {
+          user_id: member.user_id,
+          full_name: member.profiles?.full_name || 'Membro',
+          total_paid: 0,
+          total_consumed: 0,
+          balance: 0,
+        };
+      });
 
-          const balance = totalPaid - totalConsumed;
+      // Calculate totals
+      expenses.forEach((expense) => {
+        // Add to total paid for the payer
+        if (memberBalances[expense.created_by]) {
+          memberBalances[expense.created_by].total_paid += parseFloat(
+            expense.total_amount
+          );
+        }
 
-          return {
-            user_id: member.user_id,
-            group_id: groupId,
-            total_paid: totalPaid.toString(),
-            total_consumed: totalConsumed.toString(),
-            balance: balance.toString(),
-            full_name: 'Utente', // Placeholder
-            email: 'user@example.com', // Placeholder
-          };
-        })
+        // Add to total consumed for each sharer
+        expense.expense_shares.forEach((share) => {
+          if (memberBalances[share.user_id]) {
+            memberBalances[share.user_id].total_consumed += parseFloat(
+              share.amount_consumed
+            );
+          }
+        });
+      });
+
+      // Calculate final balances
+      Object.values(memberBalances).forEach((member) => {
+        member.balance = member.total_paid - member.total_consumed;
+      });
+
+      // Calculate settlements (chi deve pagare chi)
+      const settlements = this.calculateSettlements(
+        Object.values(memberBalances)
       );
 
-      const settlements = this.calculateOptimalSettlements(balances);
+      debugLog('Balances calculated', {
+        members: Object.keys(memberBalances).length,
+        settlements: settlements.length,
+      });
 
       return {
         success: true,
-        balances: balances,
-        settlements: settlements,
+        balances: Object.values(memberBalances),
+        settlements,
       };
     } catch (error) {
-      return {
-        success: false,
-        error: handleSupabaseError(error),
-      };
+      debugLog('Unexpected error calculating balances', null, error);
+      return { success: false, error: error.message };
     }
-  }
+  },
 
-  // 🔄 Calcola regolamenti - ALGORITMO SEMPLIFICATO
-  calculateOptimalSettlements(balances) {
-    if (!balances || balances.length === 0) return [];
-
-    const creditors = balances
-      .filter(b => parseFloat(b.balance) > 0.01)
-      .map(b => ({ ...b, balance: parseFloat(b.balance) }))
-      .sort((a, b) => b.balance - a.balance);
-
-    const debtors = balances
-      .filter(b => parseFloat(b.balance) < -0.01)
-      .map(b => ({ ...b, balance: Math.abs(parseFloat(b.balance)) }))
-      .sort((a, b) => b.balance - a.balance);
-
+  // 🧮 Calculate settlements algorithm
+  calculateSettlements(balances) {
     const settlements = [];
-    let i = 0, j = 0;
+    const creditors = [];
+    const debtors = [];
 
+    // Separate creditors and debtors
+    balances.forEach((member) => {
+      if (member.balance > 0.01) {
+        creditors.push({ ...member, amount: member.balance });
+      } else if (member.balance < -0.01) {
+        debtors.push({ ...member, amount: Math.abs(member.balance) });
+      }
+    });
+
+    // Sort by amount (descending)
+    creditors.sort((a, b) => b.amount - a.amount);
+    debtors.sort((a, b) => b.amount - a.amount);
+
+    // Calculate settlements
+    let i = 0,
+      j = 0;
     while (i < creditors.length && j < debtors.length) {
       const creditor = creditors[i];
       const debtor = debtors[j];
+      const amount = Math.min(creditor.amount, debtor.amount);
 
-      const transferAmount = Math.min(creditor.balance, debtor.balance);
-
-      if (transferAmount > 0.01) {
+      if (amount > 0.01) {
         settlements.push({
-          from: debtor.full_name || 'Utente',
+          from: debtor.full_name,
           fromUserId: debtor.user_id,
-          to: creditor.full_name || 'Utente',
+          to: creditor.full_name,
           toUserId: creditor.user_id,
-          amount: transferAmount,
+          amount: amount,
         });
-
-        creditor.balance -= transferAmount;
-        debtor.balance -= transferAmount;
       }
 
-      if (creditor.balance <= 0.01) i++;
-      if (debtor.balance <= 0.01) j++;
+      creditor.amount -= amount;
+      debtor.amount -= amount;
+
+      if (creditor.amount < 0.01) i++;
+      if (debtor.amount < 0.01) j++;
     }
 
     return settlements;
-  }
+  },
 
-  // 🧪 Test semplificato
-  async testService() {
-    debugLog('Testing Simplified Service');
+  // 🔄 Subscribe to real-time changes
+  subscribeToGroupChanges(groupId, callbacks) {
+    debugLog('Setting up real-time subscription', { groupId });
 
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const authenticated = !!user;
+    const channel = supabase
+      .channel(`group_${groupId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'expenses',
+          filter: `group_id=eq.${groupId}`,
+        },
+        (payload) => {
+          debugLog('Expense change detected', payload);
+          if (callbacks.onExpenseChange) {
+            callbacks.onExpenseChange(payload);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'group_members',
+          filter: `group_id=eq.${groupId}`,
+        },
+        (payload) => {
+          debugLog('Member change detected', payload);
+          if (callbacks.onMemberChange) {
+            callbacks.onMemberChange(payload);
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'expense_shares',
+        },
+        (payload) => {
+          debugLog('Share change detected', payload);
+          if (callbacks.onShareChange) {
+            callbacks.onShareChange(payload);
+          }
+        }
+      )
+      .subscribe();
 
-      // Test query semplici
-      const { error: groupsError } = await supabase
-        .from(TABLES.GROUPS)
-        .select('count(*)')
-        .limit(1);
-
-      const { error: membersError } = await supabase
-        .from(TABLES.GROUP_MEMBERS)
-        .select('count(*)')
-        .limit(1);
-
-      return {
-        authenticated,
-        groupsTable: !groupsError,
-        membersTable: !membersError,
-        overall: authenticated && !groupsError && !membersError,
-      };
-    } catch (error) {
-      console.error('Service test error:', error);
-      return { overall: false };
-    }
-  }
-}
-
-// Esporta istanza singleton
-export const groupsService = new SimplifiedGroupsService();
-export default groupsService;
+    // Return unsubscribe function
+    return () => {
+      debugLog('Unsubscribing from real-time changes', { groupId });
+      supabase.removeChannel(channel);
+    };
+  },
+};

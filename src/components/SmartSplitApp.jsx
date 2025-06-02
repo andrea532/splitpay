@@ -1,28 +1,38 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { authService } from '../services/authService';
 import { groupsService } from '../services/groupsService';
 import AuthScreen from './AuthScreen';
-import NumberPad from './NumberPad';
 import Icon from './Icon';
+import Modal from './Modal';
+import NumberPad from './NumberPad';
+import Toast from './Toast';
+import GroupDetailsView from './GroupDetailsView';
+import ProfileModal from './ProfileModal';
+import SkeletonLoader from './SkeletonLoader';
+import PullToRefresh from './PullToRefresh';
+import { vibrate } from '../utils/haptics';
 
 const SmartSplitApp = () => {
   const [user, setUser] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [groups, setGroups] = useState([]);
   const [activeGroup, setActiveGroup] = useState(null);
-  const [groupExpenses, setGroupExpenses] = useState([]);
-  const [groupBalances, setGroupBalances] = useState(null);
+  const [activeTab, setActiveTab] = useState('groups');
+  const [toast, setToast] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
 
-  // Stati modals
+  // Modal states
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showJoinGroup, setShowJoinGroup] = useState(false);
-  const [showAddExpense, setShowAddExpense] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
 
   // Form data
   const [groupName, setGroupName] = useState('');
+  const [groupDescription, setGroupDescription] = useState('');
   const [inviteCode, setInviteCode] = useState('');
-  const [expenseTitle, setExpenseTitle] = useState('');
-  const [expenseAmount, setExpenseAmount] = useState('');
+  const [groupCategory, setGroupCategory] = useState('general');
 
   useEffect(() => {
     initializeAuth();
@@ -34,15 +44,11 @@ const SmartSplitApp = () => {
     }
   }, [user]);
 
-  useEffect(() => {
-    if (activeGroup) {
-      loadGroupData();
-    }
-  }, [activeGroup]);
-
   const initializeAuth = async () => {
     try {
-      const { data: { session } } = await authService.getCurrentSession();
+      const {
+        data: { session },
+      } = await authService.getCurrentSession();
       if (session?.user) {
         setUser(session.user);
       }
@@ -63,73 +69,74 @@ const SmartSplitApp = () => {
     }
   };
 
-  const loadGroups = async () => {
-    const result = await groupsService.getUserGroups();
-    if (result.success) {
-      setGroups(result.groups);
+  const loadGroups = async (showLoader = true) => {
+    if (showLoader) setIsLoading(true);
+
+    try {
+      const result = await groupsService.getUserGroups();
+      if (result.success) {
+        setGroups(result.groups);
+      }
+    } finally {
+      if (showLoader) setIsLoading(false);
     }
   };
 
-  const loadGroupData = async () => {
-    if (!activeGroup) return;
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    vibrate('light');
+    await loadGroups(false);
+    setIsRefreshing(false);
+  }, []);
 
-    const [expensesResult, balancesResult] = await Promise.all([
-      groupsService.getGroupExpenses(activeGroup.id),
-      groupsService.calculateGroupBalances(activeGroup.id)
-    ]);
-
-    if (expensesResult.success) {
-      setGroupExpenses(expensesResult.expenses);
-    }
-    if (balancesResult.success) {
-      setGroupBalances(balancesResult);
-    }
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
   };
 
   const createGroup = async () => {
-    if (!groupName.trim()) return;
+    if (!groupName.trim()) {
+      showToast('Inserisci un nome per il gruppo', 'error');
+      vibrate('error');
+      return;
+    }
 
-    const result = await groupsService.createGroup(groupName.trim());
+    vibrate('success');
+    const result = await groupsService.createGroup(
+      groupName.trim(),
+      groupDescription.trim()
+    );
+
     if (result.success) {
       setGroupName('');
+      setGroupDescription('');
+      setGroupCategory('general');
       setShowCreateGroup(false);
       loadGroups();
-      // Copia codice automaticamente
       navigator.clipboard.writeText(result.group.invite_code);
-      alert(`Gruppo creato! Codice ${result.group.invite_code} copiato negli appunti`);
+      showToast(`Gruppo creato! Codice ${result.group.invite_code} copiato`);
+    } else {
+      showToast(result.error, 'error');
+      vibrate('error');
     }
   };
 
   const joinGroup = async () => {
-    if (!inviteCode.trim()) return;
+    if (!inviteCode.trim()) {
+      showToast('Inserisci il codice invito', 'error');
+      vibrate('error');
+      return;
+    }
 
+    vibrate('success');
     const result = await groupsService.joinGroupByInviteCode(inviteCode.trim());
     if (result.success) {
       setInviteCode('');
       setShowJoinGroup(false);
       loadGroups();
+      showToast('Ti sei unito al gruppo!');
     } else {
-      alert(result.error);
-    }
-  };
-
-  const addExpense = async () => {
-    if (!expenseTitle.trim() || !expenseAmount) return;
-
-    const amount = parseFloat(expenseAmount);
-    if (isNaN(amount) || amount <= 0) return;
-
-    const result = await groupsService.createExpense(activeGroup.id, {
-      title: expenseTitle.trim(),
-      totalAmount: amount.toString(),
-      shares: {} // Semplificato - la divisione avviene automaticamente
-    });
-
-    if (result.success) {
-      setExpenseTitle('');
-      setExpenseAmount('');
-      setShowAddExpense(false);
-      loadGroupData();
+      showToast(result.error, 'error');
+      vibrate('error');
     }
   };
 
@@ -137,18 +144,39 @@ const SmartSplitApp = () => {
     return `€${parseFloat(amount).toFixed(2)}`;
   };
 
-  const getUserName = (userId, fullName) => {
-    return userId === user?.id ? 'Tu' : fullName || 'Utente';
+  const handleGroupClick = (group) => {
+    vibrate('light');
+    setActiveGroup(group);
   };
 
-  const logout = () => {
-    authService.signOut();
+  const handleBackFromGroup = () => {
+    vibrate('light');
+    setActiveGroup(null);
+  };
+
+  const handleTabChange = (tab) => {
+    vibrate('light');
+    setActiveTab(tab);
+  };
+
+  const filteredGroups = groups.filter(
+    (group) =>
+      group.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      group.description?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const groupCategories = {
+    trip: { icon: '✈️', label: 'Viaggio' },
+    home: { icon: '🏠', label: 'Casa' },
+    event: { icon: '🎉', label: 'Evento' },
+    general: { icon: '📌', label: 'Generale' },
   };
 
   if (isLoading) {
     return (
-      <div className="app-loading">
-        <div className="loading-spinner"></div>
+      <div className="loading-container">
+        <div className="loading-spinner" />
+        <p className="loading-text">Caricamento...</p>
       </div>
     );
   }
@@ -157,249 +185,268 @@ const SmartSplitApp = () => {
     return <AuthScreen onAuthSuccess={setUser} />;
   }
 
-  // LISTA GRUPPI
-  if (!activeGroup) {
+  // GROUP DETAILS VIEW
+  if (activeGroup) {
     return (
-      <div className="app">
-        <div className="top-bar">
-          <h1>💰 SmartSplit</h1>
-          <button onClick={logout} className="icon-btn">
-            🚪
-          </button>
-        </div>
-
-        <div className="main-content">
-          <div className="quick-actions">
-            <button 
-              className="big-button primary"
-              onClick={() => setShowCreateGroup(true)}
-            >
-              <span className="big-icon">➕</span>
-              <span>Crea Gruppo</span>
-            </button>
-            
-            <button 
-              className="big-button secondary"
-              onClick={() => setShowJoinGroup(true)}
-            >
-              <span className="big-icon">🎟️</span>
-              <span>Usa Codice</span>
-            </button>
-          </div>
-
-          <div className="groups-list">
-            <h2>I tuoi gruppi</h2>
-            {groups.length === 0 ? (
-              <div className="empty-message">
-                <p>Nessun gruppo ancora</p>
-                <p className="hint">Crea o unisciti a un gruppo per iniziare</p>
-              </div>
-            ) : (
-              groups.map((group) => (
-                <div 
-                  key={group.id} 
-                  className="group-item"
-                  onClick={() => setActiveGroup(group)}
-                >
-                  <div>
-                    <h3>{group.name}</h3>
-                    <p>{group.memberCount} persone • {formatCurrency(group.totalAmount)}</p>
-                  </div>
-                  <span className="arrow">→</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Modal Crea Gruppo */}
-        {showCreateGroup && (
-          <div className="modal-backdrop" onClick={() => setShowCreateGroup(false)}>
-            <div className="modal-simple" onClick={(e) => e.stopPropagation()}>
-              <h2>Nuovo Gruppo</h2>
-              <input
-                type="text"
-                placeholder="Nome del gruppo"
-                value={groupName}
-                onChange={(e) => setGroupName(e.target.value)}
-                className="input-simple"
-                autoFocus
-                maxLength={30}
-              />
-              <div className="modal-buttons">
-                <button onClick={() => setShowCreateGroup(false)} className="btn-text">
-                  Annulla
-                </button>
-                <button onClick={createGroup} className="btn-primary">
-                  Crea
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Modal Unisciti */}
-        {showJoinGroup && (
-          <div className="modal-backdrop" onClick={() => setShowJoinGroup(false)}>
-            <div className="modal-simple" onClick={(e) => e.stopPropagation()}>
-              <h2>Inserisci Codice</h2>
-              <input
-                type="text"
-                placeholder="CODICE"
-                value={inviteCode}
-                onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-                className="input-simple input-code"
-                autoFocus
-                maxLength={8}
-              />
-              <div className="modal-buttons">
-                <button onClick={() => setShowJoinGroup(false)} className="btn-text">
-                  Annulla
-                </button>
-                <button onClick={joinGroup} className="btn-primary">
-                  Entra
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      <GroupDetailsView
+        group={activeGroup}
+        user={user}
+        onBack={handleBackFromGroup}
+        showToast={showToast}
+      />
     );
   }
 
-  // DETTAGLIO GRUPPO
+  // MAIN GROUPS LIST VIEW
   return (
     <div className="app">
-      <div className="top-bar">
-        <button onClick={() => setActiveGroup(null)} className="icon-btn">
-          ←
-        </button>
-        <h1>{activeGroup.name}</h1>
-        <button 
-          onClick={() => {
-            navigator.clipboard.writeText(activeGroup.invite_code);
-            alert(`Codice ${activeGroup.invite_code} copiato!`);
-          }} 
-          className="icon-btn"
-        >
-          📋
-        </button>
-      </div>
+      {/* Navigation Bar */}
+      <nav className="nav-bar safe-top">
+        <div className="nav-content">
+          <button className="nav-action" onClick={() => setShowProfile(true)}>
+            <Icon name="user" size={20} />
+          </button>
+          <h1 className="nav-title">SmartSplit</h1>
+          <div style={{ width: 40 }}></div>
+        </div>
+      </nav>
 
-      <div className="main-content">
-        {/* Pulsante Aggiungi Spesa */}
-        <button 
-          className="add-expense-button"
-          onClick={() => setShowAddExpense(true)}
-        >
-          <span>➕</span>
-          <span>Aggiungi Spesa</span>
-        </button>
+      {/* Scrollable Content with Pull to Refresh */}
+      <PullToRefresh onRefresh={handleRefresh} isRefreshing={isRefreshing}>
+        <div className="scroll-container">
+          <div className="content-wrapper">
+            {/* Quick Actions */}
+            <div className="quick-actions">
+              <button
+                className="quick-action primary"
+                onClick={() => setShowCreateGroup(true)}
+              >
+                <div className="quick-action-icon">
+                  <Icon name="add" size={24} />
+                </div>
+                <span className="quick-action-label">Crea gruppo</span>
+              </button>
 
-        {/* Riepilogo Semplice */}
-        {groupBalances && groupBalances.balances.length > 0 && (
-          <div className="summary-card">
-            <h2>💰 Chi deve pagare</h2>
-            {groupBalances.settlements.length === 0 ? (
-              <p className="all-even">Tutti pari! ✅</p>
-            ) : (
-              <div className="settlements-list">
-                {groupBalances.settlements.map((settlement, index) => (
-                  <div key={index} className="settlement-item">
-                    <span className="who">
-                      {getUserName(settlement.fromUserId, settlement.from)}
-                    </span>
-                    <span className="arrow">→</span>
-                    <span className="to-whom">
-                      {getUserName(settlement.toUserId, settlement.to)}
-                    </span>
-                    <span className="amount">{formatCurrency(settlement.amount)}</span>
+              <button
+                className="quick-action success"
+                onClick={() => setShowJoinGroup(true)}
+              >
+                <div className="quick-action-icon">
+                  <Icon name="qr-code" size={24} />
+                </div>
+                <span className="quick-action-label">Usa codice</span>
+              </button>
+            </div>
+
+            {/* Groups List */}
+            {activeTab === 'groups' && (
+              <>
+                <div className="section-header">
+                  <h2 className="section-title">I tuoi gruppi</h2>
+                  {groups.length > 0 && (
+                    <span className="section-count">{groups.length}</span>
+                  )}
+                </div>
+
+                {isLoading ? (
+                  <SkeletonLoader type="groups" count={3} />
+                ) : filteredGroups.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-icon">👥</div>
+                    <div className="empty-title">
+                      {searchQuery ? 'Nessun risultato' : 'Nessun gruppo'}
+                    </div>
+                    <div className="empty-text">
+                      {searchQuery
+                        ? "Prova con un'altra ricerca"
+                        : 'Crea un nuovo gruppo o unisciti con un codice'}
+                    </div>
                   </div>
-                ))}
+                ) : (
+                  filteredGroups.map((group) => (
+                    <div
+                      key={group.id}
+                      className="group-item"
+                      onClick={() => handleGroupClick(group)}
+                    >
+                      <div className="group-avatar">
+                        {group.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="group-details">
+                        <div className="group-name">{group.name}</div>
+                        <div className="group-info">
+                          <span>{group.memberCount} membri</span>
+                          <span>•</span>
+                          <span>{formatCurrency(group.totalAmount)}</span>
+                        </div>
+                      </div>
+                      <div className="group-arrow">
+                        <Icon name="chevron-forward" size={20} />
+                      </div>
+                    </div>
+                  ))
+                )}
+              </>
+            )}
+
+            {/* Activity Tab */}
+            {activeTab === 'activity' && (
+              <div className="activity-section">
+                <div className="section-header">
+                  <h2 className="section-title">Attività recenti</h2>
+                </div>
+                <div className="activity-list">
+                  <div className="empty-state">
+                    <div className="empty-icon">📊</div>
+                    <div className="empty-title">Nessuna attività</div>
+                    <div className="empty-text">
+                      Le attività dei tuoi gruppi appariranno qui
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Stats Tab */}
+            {activeTab === 'stats' && (
+              <div className="stats-section">
+                <div className="section-header">
+                  <h2 className="section-title">Le tue statistiche</h2>
+                </div>
+                <div className="overall-stats">
+                  <div className="stat-card large">
+                    <div className="stat-icon">💰</div>
+                    <div className="stat-value">
+                      {formatCurrency(
+                        groups.reduce((sum, g) => sum + g.totalAmount, 0)
+                      )}
+                    </div>
+                    <div className="stat-label">Totale gestito</div>
+                  </div>
+                  <div className="stats-grid">
+                    <div className="stat-card">
+                      <div className="stat-icon">👥</div>
+                      <div className="stat-value">{groups.length}</div>
+                      <div className="stat-label">Gruppi</div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-icon">🧾</div>
+                      <div className="stat-value">
+                        {groups.reduce((sum, g) => sum + g.expenseCount, 0)}
+                      </div>
+                      <div className="stat-label">Spese totali</div>
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
-        )}
+        </div>
+      </PullToRefresh>
 
-        {/* Bilanci Individuali */}
-        {groupBalances && groupBalances.balances.length > 0 && (
-          <div className="balances-card">
-            <h2>📊 Situazione</h2>
-            {groupBalances.balances.map((balance, index) => {
-              const bal = parseFloat(balance.balance);
-              const isPositive = bal >= 0;
-              
-              return (
-                <div key={index} className="balance-row">
-                  <span className="person-name">
-                    {getUserName(balance.user_id, balance.full_name)}
-                  </span>
-                  <span className={`balance-amount ${isPositive ? 'positive' : 'negative'}`}>
-                    {isPositive ? '+' : ''}{formatCurrency(Math.abs(bal))}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Lista Spese */}
-        <div className="expenses-card">
-          <h2>🧾 Spese</h2>
-          {groupExpenses.length === 0 ? (
-            <p className="no-expenses">Nessuna spesa ancora</p>
-          ) : (
-            groupExpenses.slice(0, 10).map((expense) => (
-              <div key={expense.id} className="expense-row">
-                <div>
-                  <h4>{expense.title}</h4>
-                  <p className="expense-info">
-                    {getUserName(expense.created_by, 'Qualcuno')} • 
-                    {new Date(expense.expense_date).toLocaleDateString('it-IT')}
-                  </p>
-                </div>
-                <span className="expense-amount">{formatCurrency(expense.total_amount)}</span>
-              </div>
-            ))
-          )}
+      {/* Bottom Tab Bar */}
+      <div className="tab-bar safe-bottom">
+        <div className="tab-bar-content">
+          <button
+            className={`tab-item ${activeTab === 'groups' ? 'active' : ''}`}
+            onClick={() => handleTabChange('groups')}
+          >
+            <span className="tab-icon">👥</span>
+            <span className="tab-label">Gruppi</span>
+          </button>
+          <button
+            className={`tab-item ${activeTab === 'activity' ? 'active' : ''}`}
+            onClick={() => handleTabChange('activity')}
+          >
+            <span className="tab-icon">📊</span>
+            <span className="tab-label">Attività</span>
+          </button>
+          <button
+            className={`tab-item ${activeTab === 'stats' ? 'active' : ''}`}
+            onClick={() => handleTabChange('stats')}
+          >
+            <span className="tab-icon">📈</span>
+            <span className="tab-label">Stats</span>
+          </button>
         </div>
       </div>
 
-      {/* Modal Aggiungi Spesa con NumberPad */}
-      {showAddExpense && (
-        <div className="modal-backdrop" onClick={() => setShowAddExpense(false)}>
-          <div className="modal-expense" onClick={(e) => e.stopPropagation()}>
-            <h2>Nuova Spesa</h2>
-            
+      {/* Create Group Modal */}
+      {showCreateGroup && (
+        <Modal
+          title="Nuovo Gruppo"
+          onClose={() => setShowCreateGroup(false)}
+          onSave={createGroup}
+        >
+          <div className="form-group">
+            <label className="form-label">Nome del gruppo</label>
             <input
               type="text"
-              placeholder="Cosa hai pagato?"
-              value={expenseTitle}
-              onChange={(e) => setExpenseTitle(e.target.value)}
-              className="input-simple"
+              className="form-input"
+              placeholder="es. Vacanza Grecia 2024"
+              value={groupName}
+              onChange={(e) => setGroupName(e.target.value)}
+              autoFocus
+              maxLength={50}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Descrizione (opzionale)</label>
+            <textarea
+              className="form-input"
+              placeholder="Aggiungi una descrizione..."
+              value={groupDescription}
+              onChange={(e) => setGroupDescription(e.target.value)}
+              rows={3}
+              maxLength={200}
+            />
+          </div>
+        </Modal>
+      )}
+
+      {/* Join Group Modal */}
+      {showJoinGroup && (
+        <Modal
+          title="Unisciti a Gruppo"
+          onClose={() => setShowJoinGroup(false)}
+          onSave={joinGroup}
+        >
+          <div className="form-group">
+            <label className="form-label">Codice invito</label>
+            <input
+              type="text"
+              className="form-input invite-code-input"
+              placeholder="XXXXXXXX"
+              value={inviteCode}
+              onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+              maxLength={8}
               autoFocus
             />
-            
-            <div className="amount-display">
-              <span className="currency">€</span>
-              <span className="amount-value">{expenseAmount || '0.00'}</span>
-            </div>
-            
-            <NumberPad 
-              value={expenseAmount}
-              onChange={setExpenseAmount}
-            />
-            
-            <div className="modal-buttons">
-              <button onClick={() => setShowAddExpense(false)} className="btn-text">
-                Annulla
-              </button>
-              <button onClick={addExpense} className="btn-primary">
-                Salva
-              </button>
-            </div>
+            <p className="help-text">
+              💡 Chiedi il codice invito al creatore del gruppo
+            </p>
           </div>
-        </div>
+        </Modal>
+      )}
+
+      {/* Profile Modal */}
+      {showProfile && (
+        <ProfileModal
+          user={user}
+          groups={groups}
+          onClose={() => setShowProfile(false)}
+          showToast={showToast}
+        />
+      )}
+
+      {/* Toast Notifications */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
       )}
     </div>
   );

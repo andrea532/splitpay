@@ -15,27 +15,27 @@ const AuthScreen = ({ onAuthSuccess }) => {
   const [fullName, setFullName] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  // Form validation
+  // Errors
   const [errors, setErrors] = useState({});
 
   const validateForm = () => {
     const newErrors = {};
 
     if (!email.trim()) {
-      newErrors.email = 'Email è richiesta';
+      newErrors.email = 'Email richiesta';
     } else if (!isValidEmail(email)) {
-      newErrors.email = 'Formato email non valido';
+      newErrors.email = 'Email non valida';
     }
 
     if (!password) {
-      newErrors.password = 'Password è richiesta';
+      newErrors.password = 'Password richiesta';
     } else if (!isValidPassword(password)) {
-      newErrors.password = 'Password deve essere di almeno 6 caratteri';
+      newErrors.password = 'Minimo 6 caratteri';
     }
 
     if (!isLogin) {
       if (!fullName.trim()) {
-        newErrors.fullName = 'Nome è richiesto';
+        newErrors.fullName = 'Nome richiesto';
       }
 
       if (password !== confirmPassword) {
@@ -50,9 +50,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!validateForm()) {
-      return;
-    }
+    if (!validateForm()) return;
 
     setIsLoading(true);
 
@@ -66,12 +64,6 @@ const AuthScreen = ({ onAuthSuccess }) => {
       }
 
       if (result.success) {
-        alert(
-          result.message ||
-            (isLogin
-              ? 'Login effettuato con successo!'
-              : 'Registrazione completata!')
-        );
         if (onAuthSuccess) {
           onAuthSuccess(result.user);
         }
@@ -79,7 +71,7 @@ const AuthScreen = ({ onAuthSuccess }) => {
         alert(result.error);
       }
     } catch (error) {
-      alert('Si è verificato un errore imprevisto');
+      alert('Errore imprevisto');
     } finally {
       setIsLoading(false);
     }
@@ -87,12 +79,12 @@ const AuthScreen = ({ onAuthSuccess }) => {
 
   const handleForgotPassword = async () => {
     if (!email.trim()) {
-      alert('Inserisci la tua email per reimpostare la password');
+      alert('Inserisci la tua email');
       return;
     }
 
     if (!isValidEmail(email)) {
-      alert("Inserisci un'email valida");
+      alert('Email non valida');
       return;
     }
 
@@ -100,212 +92,205 @@ const AuthScreen = ({ onAuthSuccess }) => {
 
     try {
       const result = await authService.resetPassword(email);
-
       if (result.success) {
         alert(result.message);
       } else {
         alert(result.error);
       }
     } catch (error) {
-      alert('Si è verificato un errore imprevisto');
+      alert('Errore imprevisto');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const resetForm = () => {
-    setEmail('');
-    setPassword('');
-    setFullName('');
-    setConfirmPassword('');
+  const switchMode = () => {
+    setIsLogin(!isLogin);
     setErrors({});
     setShowPassword(false);
   };
 
-  const switchMode = () => {
-    setIsLogin(!isLogin);
-    resetForm();
-  };
-
   return (
     <div className="auth-container">
-      <div className="auth-content">
-        {/* Header */}
-        <div className="auth-header">
-          <h1 className="auth-logo">💰 SmartSplit</h1>
-          <h2 className="auth-subtitle">
-            {isLogin ? 'Bentornato!' : 'Crea il tuo account'}
-          </h2>
-          <p className="auth-description">
-            {isLogin
-              ? 'Accedi per gestire le tue spese di gruppo'
-              : 'Registrati per iniziare a condividere le spese con i tuoi amici'}
-          </p>
-        </div>
+      <div className="auth-header">
+        <div className="auth-logo">💰</div>
+        <h1 className="auth-title">SmartSplit</h1>
+        <p className="auth-subtitle">
+          {isLogin
+            ? 'Gestisci le spese con i tuoi amici'
+            : 'Crea il tuo account gratuito'}
+        </p>
+      </div>
 
-        {/* Form */}
+      <div className="auth-content">
         <form onSubmit={handleSubmit} className="auth-form">
-          {/* Nome (solo registrazione) */}
+          {/* Name field (signup only) */}
           {!isLogin && (
-            <div className="auth-input-container">
+            <div className="auth-input-group">
               <div className="auth-input-wrapper">
-                <Icon name="user" size={20} color="#666" />
+                <span className="auth-input-icon">
+                  <Icon name="user" size={20} />
+                </span>
                 <input
+                  type="text"
                   className="auth-input"
                   placeholder="Nome completo"
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  maxLength={50}
                   disabled={isLoading}
                 />
               </div>
               {errors.fullName && (
-                <p className="auth-error-text">{errors.fullName}</p>
+                <div className="auth-error">
+                  <span>⚠️</span>
+                  <span>{errors.fullName}</span>
+                </div>
               )}
             </div>
           )}
 
-          {/* Email */}
-          <div className="auth-input-container">
+          {/* Email field */}
+          <div className="auth-input-group">
             <div className="auth-input-wrapper">
-              <Icon name="mail" size={20} color="#666" />
+              <span className="auth-input-icon">
+                <Icon name="mail" size={20} />
+              </span>
               <input
+                type="email"
                 className="auth-input"
                 placeholder="Email"
-                type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                maxLength={100}
                 disabled={isLoading}
+                autoComplete="email"
               />
             </div>
-            {errors.email && <p className="auth-error-text">{errors.email}</p>}
+            {errors.email && (
+              <div className="auth-error">
+                <span>⚠️</span>
+                <span>{errors.email}</span>
+              </div>
+            )}
           </div>
 
-          {/* Password */}
-          <div className="auth-input-container">
+          {/* Password field */}
+          <div className="auth-input-group">
             <div className="auth-input-wrapper">
-              <Icon name="lock" size={20} color="#666" />
+              <span className="auth-input-icon">
+                <Icon name="lock" size={20} />
+              </span>
               <input
+                type={showPassword ? 'text' : 'password'}
                 className="auth-input"
                 placeholder="Password"
-                type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                maxLength={50}
                 disabled={isLoading}
+                autoComplete={isLogin ? 'current-password' : 'new-password'}
               />
               <button
                 type="button"
-                onClick={() => setShowPassword(!showPassword)}
                 className="auth-eye-button"
+                onClick={() => setShowPassword(!showPassword)}
                 disabled={isLoading}
               >
-                <Icon
-                  name={showPassword ? 'eye' : 'eye-off'}
-                  size={20}
-                  color="#666"
-                />
+                <Icon name={showPassword ? 'eye-off' : 'eye'} size={20} />
               </button>
             </div>
             {errors.password && (
-              <p className="auth-error-text">{errors.password}</p>
+              <div className="auth-error">
+                <span>⚠️</span>
+                <span>{errors.password}</span>
+              </div>
             )}
           </div>
 
-          {/* Conferma Password (solo registrazione) */}
+          {/* Confirm password (signup only) */}
           {!isLogin && (
-            <div className="auth-input-container">
+            <div className="auth-input-group">
               <div className="auth-input-wrapper">
-                <Icon name="lock" size={20} color="#666" />
+                <span className="auth-input-icon">
+                  <Icon name="lock" size={20} />
+                </span>
                 <input
+                  type={showPassword ? 'text' : 'password'}
                   className="auth-input"
                   placeholder="Conferma password"
-                  type={showPassword ? 'text' : 'password'}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  maxLength={50}
                   disabled={isLoading}
+                  autoComplete="new-password"
                 />
               </div>
               {errors.confirmPassword && (
-                <p className="auth-error-text">{errors.confirmPassword}</p>
+                <div className="auth-error">
+                  <span>⚠️</span>
+                  <span>{errors.confirmPassword}</span>
+                </div>
               )}
             </div>
           )}
 
-          {/* Forgot Password (solo login) */}
-          {isLogin && (
-            <button
-              type="button"
-              className="auth-forgot-button"
-              onClick={handleForgotPassword}
-              disabled={isLoading}
-            >
-              Password dimenticata?
+          <div className="auth-actions">
+            <button type="submit" className="auth-submit" disabled={isLoading}>
+              {isLoading ? (
+                <div className="loading-spinner"></div>
+              ) : (
+                <>
+                  <span>{isLogin ? 'Accedi' : 'Registrati'}</span>
+                  <Icon name="arrow-right" size={20} />
+                </>
+              )}
             </button>
-          )}
 
-          {/* Submit Button */}
-          <button
-            type="submit"
-            className={`auth-submit-button ${isLoading ? 'disabled' : ''}`}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <div
-                className="loading-spinner"
-                style={{ width: '20px', height: '20px' }}
-              ></div>
-            ) : (
-              <div className="auth-submit-content">
-                <span>{isLogin ? 'Accedi' : 'Registrati'}</span>
-                <Icon name="arrow-right" size={20} color="white" />
-              </div>
+            {isLogin && (
+              <button
+                type="button"
+                className="auth-forgot"
+                onClick={handleForgotPassword}
+                disabled={isLoading}
+              >
+                Password dimenticata?
+              </button>
             )}
-          </button>
+          </div>
 
-          {/* Switch Mode */}
-          <div className="auth-switch-container">
-            <span className="auth-switch-text">
-              {isLogin ? 'Non hai un account?' : 'Hai già un account?'}
-            </span>
+          <div className="auth-switch">
+            {isLogin ? 'Non hai un account? ' : 'Hai già un account? '}
             <button
               type="button"
+              className="auth-switch-button"
               onClick={switchMode}
               disabled={isLoading}
-              className="auth-switch-button"
             >
               {isLogin ? 'Registrati' : 'Accedi'}
             </button>
           </div>
         </form>
 
-        {/* Features Preview */}
+        {/* Features */}
         <div className="auth-features">
-          <h3 className="auth-features-title">
-            ✨ Cosa puoi fare con SmartSplit:
-          </h3>
-          <div className="auth-feature-item">
-            <Icon name="check" size={16} color="#4CAF50" />
+          <h3 className="auth-features-title">Come funziona SmartSplit</h3>
+          <div className="auth-feature">
+            <span className="auth-feature-icon">✅</span>
             <span className="auth-feature-text">
-              Crea gruppi e invita amici
+              Crea gruppi per viaggi, coinquilini o eventi
             </span>
           </div>
-          <div className="auth-feature-item">
-            <Icon name="check" size={16} color="#4CAF50" />
+          <div className="auth-feature">
+            <span className="auth-feature-icon">✅</span>
             <span className="auth-feature-text">
-              Ogni utente aggiunge le proprie spese
+              Ognuno aggiunge le proprie spese
             </span>
           </div>
-          <div className="auth-feature-item">
-            <Icon name="check" size={16} color="#4CAF50" />
+          <div className="auth-feature">
+            <span className="auth-feature-icon">✅</span>
             <span className="auth-feature-text">
-              Calcoli automatici e regolamenti
+              L'app calcola automaticamente chi deve a chi
             </span>
           </div>
-          <div className="auth-feature-item">
-            <Icon name="check" size={16} color="#4CAF50" />
+          <div className="auth-feature">
+            <span className="auth-feature-icon">✅</span>
             <span className="auth-feature-text">
               Sincronizzazione in tempo reale
             </span>
