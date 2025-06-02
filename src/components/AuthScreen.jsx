@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { authService } from '../services/authService';
 import { isValidEmail, isValidPassword } from '../config/supabase';
 import Icon from './Icon';
-import './AuthScreen.css';
+import '../components/AuthScreen.css';
 
 const AuthScreen = ({ onAuthSuccess }) => {
   const [isLogin, setIsLogin] = useState(true);

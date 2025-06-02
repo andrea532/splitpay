@@ -6,7 +6,7 @@
   command = "npm run build"
   
   # Directory con i file compilati
-  publish = "build"
+  publish = "dist"   # ✅ Corretto (Vite genera in dist)
 
 [build.environment]
   # Versione Node.js
